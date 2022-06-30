@@ -12,7 +12,7 @@ import simplekml
 from scipy.stats import gaussian_kde
 from matplotlib.colors import ListedColormap
 from random import random
-from math import exp, pi
+from math import exp, pi, log1p, log
 import warnings
 
 
@@ -97,7 +97,7 @@ class abstract_plot():
 
 class traj_plot(abstract_plot):
 
-	def world_plot(self, ax=None, set_extent=True):
+	def world_plot(self, ax=None, set_extent=True, marker_spacing=1, labels=None):
 		if ax == None:
 			proj =  ccrs.PlateCarree()
 			fig, ax = plt.subplots(figsize=(16,12),subplot_kw={'projection': proj})
@@ -105,10 +105,13 @@ class traj_plot(abstract_plot):
 			ax.add_feature(cfeature.NaturalEarthFeature('physical', 'land', '50m', 
 	                                                edgecolor='black', facecolor="none"))
 
+		if labels == None:
+			labels = [None for i in range(len(self.trajectories))]
+
 		ext = [float('inf'), -float('inf'), float('inf'), -float('inf')]
-		for dat in self.trajectories:
+		for n, dat in enumerate(self.trajectories):
 			color = ax.plot(dat['lon'], dat['lat'], transform=ccrs.PlateCarree())[0].get_color()
-			ax.plot(dat['lon'], dat['lat'], 'o', color=color, transform=ccrs.PlateCarree())
+			ax.plot(dat['lon'], dat['lat'], 'o', markevery=marker_spacing, color=color, label=labels[n], transform=ccrs.PlateCarree())
 			e = self.determine_extent(dat)
 			ext[0] = min(e[0], ext[0])
 			ext[1] = max(e[1], ext[1])
@@ -122,19 +125,27 @@ class traj_plot(abstract_plot):
 
 		return ax
 
-	def altitude_plot(self, ax=None):
+	def altitude_plot(self, ax=None, marker_spacing=1):
 		if ax == None:
 			fig, ax = plt.subplots(figsize=(16,12))
 
 		for dat in self.trajectories:
 			color = ax.plot([-n for n in range(len(dat['altitude']))], dat['altitude'])[0].get_color()
-			ax.plot([-n for n in range(len(dat['altitude']))], dat['altitude'], 'o', color=color)
+			ax.plot([-n for n in range(len(dat['altitude']))], dat['altitude'], 'o', markevery=marker_spacing, color=color)
 
 		return ax
 
+	def add_grid(self, ax, x_range=None, y_range=None, x_step=None, y_step=None):
+		if x_step is not None:
+			for i in range(min(x_range), max(x_range), x_step):
+				ax.axvline(x=i, ls=':', linewidth=1, c='0.5')
+		if y_step is not None:
+			for i in range(min(y_range), max(y_range), y_step):
+				ax.axhline(y=i, ls=':', linewidth=1, c='0.5')
+
 class freq_plot(abstract_plot):
 
-	def _get_collisions(self, resolution, alt=False, pressure=False):
+	def _get_collisions(self, resolution, alt=False, pressure=False, alt_scale=None):
 		points = [[],[]]
 		recorded = []
 		weights = []
@@ -142,7 +153,10 @@ class freq_plot(abstract_plot):
 			for n in range(len(traj['lat'])):
 				if alt:
 					p1 = -n
-					p2 = self.better_round(traj['altitude'][n], resolution)
+					if alt_scale:
+						p2 = self.better_round(alt_scale(traj['altitude'][n]), resolution)
+					else:
+						p2 = self.better_round(traj['altitude'][n], resolution)
 				elif pressure:
 					p1 = -n
 					p2 = self.better_round(traj['pressure'][n], resolution)
@@ -203,7 +217,7 @@ class freq_plot(abstract_plot):
 			imshow_kwargs = {}
 		collision_points, collision_weights = self._get_collisions(resolution)
 
-		print("Cont neff:", int(sum(collision_weights))**2 / sum([int(w)**2 for w in collision_weights]))
+		# print("Cont neff:", int(sum(collision_weights))**2 / sum([int(w)**2 for w in collision_weights]))
 
 		if scale is not None:
 			collision_weights = scale(collision_weights)
@@ -220,6 +234,7 @@ class freq_plot(abstract_plot):
 		Zgrid = vals[2]
 		ext = vals[4]
 		earth = plt.cm.gist_earth_r
+		# print(ext)
 
 		im = ax.imshow(Zgrid,
 				origin='lower', aspect='auto',
@@ -231,16 +246,20 @@ class freq_plot(abstract_plot):
 		ax.set_xlabel(r'Longitude($^{\circ}$E)')
 		ax.set_ylabel(r'Latitude($^{\circ}$N)')
 
+		ax.set_extent(ext, ccrs.PlateCarree())
+		ax.set_aspect('equal')
+
 		return ax, im
 
-	def altitude_contour_plot(self, ax=None, resolution=100, manual_bandwidth=None, scale=None, x_range=None, y_range=None, imshow_kwargs=None):
+	def altitude_contour_plot(self, ax=None, resolution=100, manual_bandwidth=None, scale=None, x_range=None, y_range=None, 
+		imshow_kwargs=None, yscale = None, yscale_inv = None, round_yaxis=None, yticks=None):
 		if ax == None:
 			fig, ax = plt.subplots(figsize=(16,12))
 
 		if imshow_kwargs == None:
 			imshow_kwargs = {}
 
-		collision_points, collision_weights = self._get_collisions(resolution, alt=True)
+		collision_points, collision_weights = self._get_collisions(resolution, alt=True, alt_scale=yscale)
 		if scale is not None:
 			collision_weights = scale(collision_weights)
 
@@ -268,9 +287,27 @@ class freq_plot(abstract_plot):
 		ax.set_xlabel(r'Time (h)')
 		ax.set_ylabel(r'Altitude (m AGL)')
 
+
+		if yscale: 
+			ax.set_yscale('function', **{'functions':[yscale, yscale_inv]})
+			if yticks == None:
+				alt_ticks = self.better_round(yscale_inv(ax.get_yticks()[1:-1]), 100)
+				wanted_ticks = list(yscale(alt_ticks))
+			else:
+				wanted_ticks = list(map(yscale, yticks))
+			print(wanted_ticks)
+			ax.set_yticks(wanted_ticks)
+
+
+			if round_yaxis:
+				ax.set_yticklabels(self.better_round(yscale_inv(ax.get_yticks()), round_yaxis))
+			else:
+				ax.set_yticklabels(yscale_inv(ax.get_yticks()))
+
 		return ax, im
 
-	def pressure_contour_plot(self, ax=None, resolution=10, manual_bandwidth=None, scale=None, x_range=None, y_range=None, imshow_kwargs=None, alt_yaxis=False, round_yaxis=False):
+	def pressure_contour_plot(self, ax=None, resolution=10, manual_bandwidth=None, scale=None, x_range=None, y_range=None, 
+		imshow_kwargs=None, alt_yaxis=False, round_yaxis=False, yticks=None):
 
 		if ax == None:
 			fig, ax = plt.subplots(figsize=(16,12))
@@ -307,8 +344,11 @@ class freq_plot(abstract_plot):
 		ax.set_ylabel(r'Altitude (m ASL)' if alt_yaxis else r'Pressure (hPa)')
 		if alt_yaxis: 
 			ax.set_yscale('function', **{'functions':[self.press_to_alt, self.alt_to_press]})
-			alt_ticks = self.better_round(self.press_to_alt(ax.get_yticks()[1:-1]), 100)
-			wanted_ticks = list(self.alt_to_press(alt_ticks))
+			if yticks == None:
+				alt_ticks = self.better_round(self.press_to_alt(ax.get_yticks()[1:-1]), 100)
+				wanted_ticks = list(self.alt_to_press(alt_ticks))
+			else:
+				wanted_ticks = list(map(self.alt_to_press, yticks))
 
 			ax.set_yticks(wanted_ticks)
 
@@ -371,48 +411,65 @@ class freq_plot(abstract_plot):
 if __name__ == '__main__':
 	base = 'N:/coala/'
 	files = os.listdir(base)
-	tp = traj_plot()
-	for i in files[:10]:
-		tp.append(base + i)
+	# tp = traj_plot()
+	# for i in files[:10]:
+	# 	tp.append(base + i)
 
-	fig = plt.figure(figsize=(12, 12))
-	grid = plt.GridSpec(8, 1, hspace=0.1, wspace=0.2)
-	main_ax = fig.add_subplot(grid[:4,0], projection=ccrs.PlateCarree())
-	main_ax.add_feature(cfeature.NaturalEarthFeature('physical', 'land', '50m', 
-	                                                edgecolor='black', facecolor="none"))
-	main_ax.axis('on')
-	main_ax.get_xaxis().set_visible(True)
-	main_ax.get_yaxis().set_visible(True)
-	main_ax.set_title("Trajectory plot")
-	alt_ax = fig.add_subplot(grid[5:,0])
-	alt_ax.set_title("Altitude plot")
+	# fig = plt.figure(figsize=(12, 12))
+	# grid = plt.GridSpec(8, 1, hspace=0.1, wspace=0.2)
+	# main_ax = fig.add_subplot(grid[:4,0], projection=ccrs.PlateCarree())
+	# main_ax.add_feature(cfeature.NaturalEarthFeature('physical', 'land', '50m', 
+	#                                                 edgecolor='black', facecolor="none"))
+	# main_ax.axis('on')
+	# main_ax.get_xaxis().set_visible(True)
+	# main_ax.get_yaxis().set_visible(True)
+	# main_ax.set_title("Trajectory plot")
+	# alt_ax = fig.add_subplot(grid[5:,0])
+	# alt_ax.set_title("Altitude plot")
 
-	tp.add_latlon_lines(main_ax, 20, 10)
-	tp.world_plot(main_ax, set_extent=True)
-	tp.altitude_plot(alt_ax)
+	# tp.add_latlon_lines(main_ax, 20, 10)
+	# tp.world_plot(main_ax, set_extent=True)
+	# tp.altitude_plot(alt_ax)
 
 
-	plt.show()
+	#plt.show()
 
 
 	fp = freq_plot()
-	for i in files[:100]:
-		fp.append(base + i)
+	for i in files[:10]:
+		if "." not in i:
+			fp.append(base + i)
 
+	#projec = ccrs.SouthPolarStereo()
+	#projec = ccrs.LambertConformal(central_longitude=146.316, central_latitude=-60, false_easting=0, false_northing=-90)
+	#projec = ccrs.Robinson(130)
+	projec = ccrs.NearsidePerspective(central_longitude=146.316, central_latitude=-60)
 	fig = plt.figure(figsize=(12, 12))
 	grid = plt.GridSpec(8, 1, hspace=0.1, wspace=0.2)
-	main_ax = fig.add_subplot(grid[:4,0], projection=ccrs.PlateCarree())
+	main_ax = fig.add_subplot(grid[:4,0], projection=projec)
 	main_ax.add_feature(cfeature.NaturalEarthFeature('physical', 'land', '50m', 
 	                                                edgecolor='black', facecolor="none"))
+	main_ax.gridlines(draw_labels=True, dms=True, x_inline=False, y_inline=False)
+
+	# ocean110 = cfeature.NaturalEarthFeature('physical', 'ocean', \
+ #        scale='110m', edgecolor='none', facecolor=cfeature.COLORS['water'])
+	# main_ax.add_feature(ocean110, zorder=-5)
+
+	# land110 = cfeature.NaturalEarthFeature('physical', 'land', '110m', \
+	#         edgecolor='black', facecolor="silver")
+	#main_ax.add_feature(land110, zorder=5)
 	main_ax.axis('on')
-	main_ax.get_xaxis().set_visible(True)
-	main_ax.get_yaxis().set_visible(True)
+	#main_ax.get_xaxis().set_visible(True)
+	#main_ax.get_yaxis().set_visible(True)
 	main_ax.set_title("Contour plot")
 	alt_ax = fig.add_subplot(grid[5:,0])
 	alt_ax.set_title("Altitude contour plot")
 
-	fp.add_latlon_lines(main_ax, 20, 10)
+	#fp.add_latlon_lines(main_ax, 20, 10)
 	fp.contour_plot(main_ax)
-	fp.pressure_contour_plot(alt_ax, resolution=10, alt_yaxis=True)
+	#main_ax.invert_yaxis()
+	#main_ax.invert_xaxis()
+	fp.altitude_contour_plot(alt_ax, resolution=10)#, yscale=np.log1p, yscale_inv = lambda x: np.exp(x) - 1)
+	alt_ax.set_yscale('symlog', linthreshy=0.5)
 
 	plt.show()
