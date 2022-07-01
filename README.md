@@ -23,4 +23,6 @@ Additionally, an altitude plot can be created as a time series plot of the altit
 This class is used to create KDE (Kernel Density Estimation) AKA contour plots of the trajectory data. There are a few options here:
 
  - **contour_plot**: This will plot the trajectories on a world map as a representation of the density of the trajectories. This is performed by counting the collisions in cells at the specified resolution (default 0.5 deg) and using this data as weights to a KDE calculated by `scipy`. It is recomended you set the `manual_bandwidth` if you are doing multipler contnour plots of related, but different data, as the bandwidth used for the `scipy.guassian_kde` function will change between datasets, which effects how the density map is calculated. [For an example of why this might be a problem, see here](https://stackoverflow.com/questions/63068193/scipy-gaussian-kde-produces-different-results-depending-on-method-used-weights)
-  - 
+  - **altitude_contour_plot**: This will create a contour plot of the altitudes for all trajectories. This will be plotted as a standard 2d plot (not on any map)
+  - **pressure_contour_plot**: Same as the **altitude_contour_plot** but with pressure instead.
+  - **kml_contour_plot**: This will create a contour plot using the same method as **contour_plot** (NOTE: Not updated to support weights and manual_bandwidth), but instead output the results to a .kml file (a file that can be read by Google Earth)
